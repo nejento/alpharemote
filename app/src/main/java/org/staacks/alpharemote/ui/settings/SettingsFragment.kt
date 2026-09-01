@@ -365,16 +365,23 @@ class SettingsFragment : Fragment(), CustomButtonListEventReceiver, CameraAction
     }
 
     override fun itemTouched(index: Int, oldCameraAction: CameraAction) {
-        val cameraActionPicker = CameraActionPicker.newInstance(index, oldCameraAction, showDelete = true)
+        val cameraActionPicker = CameraActionPicker.newInstance(
+            index, oldCameraAction, showDelete = true, existingActions = adapter.list
+        )
         cameraActionPicker.show(childFragmentManager, null)
     }
 
     private fun addCustomButton() {
-        val cameraActionPicker = CameraActionPicker()
+        val cameraActionPicker = CameraActionPicker.newInstance(
+            -1, null, showDelete = false, existingActions = adapter.list
+        )
         cameraActionPicker.show(childFragmentManager, null)
     }
 
-    override fun onConfirmCameraActionPicker(index: Int, cameraAction: CameraAction) {
+    override fun onConfirmCameraActionPicker(index: Int, cameraAction: CameraAction, reassignedFromIndex: Int) {
+        if (cameraAction.keyCode != null) {
+            adapter.clearKeyBinding(cameraAction.keyCode)
+        }
         adapter.updateItem(index, cameraAction)
     }
 

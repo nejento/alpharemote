@@ -59,17 +59,19 @@ class CustomButtonRecyclerViewAdapter(private val dataSet: MutableStateFlow<List
         }
         view.setOnClickListener {
             val pos = viewHolder.bindingAdapterPosition
-            list?.get(pos)?.let { action ->
-                customButtonListEventReceiver.itemTouched(
-                    pos, action
-                )
+            if (pos != RecyclerView.NO_POSITION) {
+                list?.getOrNull(pos)?.let { action ->
+                    customButtonListEventReceiver.itemTouched(
+                        pos, action
+                    )
+                }
             }
         }
         return viewHolder
     }
 
     override fun onBindViewHolder(viewHolder: ViewHolder, position: Int) {
-        list?.get(position)?.let { actionButton ->
+        list?.getOrNull(position)?.let { actionButton ->
             context?.let {ctx ->
                 viewHolder.title.text = actionButton.getName(ctx)
                 viewHolder.icon.setImageDrawable(actionButton.getIcon(ctx))
@@ -80,42 +82,64 @@ class CustomButtonRecyclerViewAdapter(private val dataSet: MutableStateFlow<List
     @Synchronized
     fun moveItem(from: Int, to: Int) {
         list?.toMutableList()?.let {newList ->
-            val item = newList.removeAt(from)
-            newList.add(to, item)
-            list = newList
-            dataSet.value = list
-            notifyItemMoved(from, to)
-
+            if (from in newList.indices && to in newList.indices) {
+                val item = newList.removeAt(from)
+                newList.add(to, item)
+                list = newList
+                dataSet.value = list
+                notifyItemMoved(from, to)
+            }
         }
     }
 
     @Synchronized
     fun removeItem(index: Int) {
         list?.toMutableList()?.let {newList ->
-            newList.removeAt(index)
-            list = newList
-            dataSet.value = list
-            notifyItemRemoved(index)
+            if (index in newList.indices) {
+                newList.removeAt(index)
+                list = newList
+                dataSet.value = list
+                notifyItemRemoved(index)
+            }
+        }
+    }
+
+    @Synchronized
+    fun clearKeyBinding(keyCode: Int) {
+        list?.let { currentList ->
+            var changed = false
+            val updated = currentList.map { action ->
+                if (action.keyCode == keyCode) {
+                    changed = true
+                    action.copy(keyCode = null)
+                } else {
+                    action
+                }
+            }
+            if (changed) {
+                list = updated
+                dataSet.value = list
+                notifyDataSetChanged()
+            }
         }
     }
 
     @Synchronized
     fun updateItem(index: Int, action: CameraAction) {
-        list?.let {
-            if (index < 0) {
-                val pos = it.count()
-                list = it.toMutableList().apply {
-                    add(pos, action)
-                }
-                notifyItemInserted(pos)
-            } else {
-                list = it.toMutableList().apply {
-                    set(index, action)
-                }
-                notifyItemChanged(index)
+        val currentList = list ?: emptyList()
+        if (index < 0 || index >= currentList.size) {
+            val pos = currentList.size
+            list = currentList.toMutableList().apply {
+                add(pos, action)
             }
-            dataSet.value = list
+            notifyItemInserted(pos)
+        } else {
+            list = currentList.toMutableList().apply {
+                set(index, action)
+            }
+            notifyItemChanged(index)
         }
+        dataSet.value = list
     }
 
     // Return the size of your dataset (invoked by the layout manager)

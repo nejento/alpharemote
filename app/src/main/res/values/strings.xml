@@ -143,4 +143,16 @@
     <string name="faq_more">You might find additional help in the frequently asked questions (FAQ).</string>
     <string name="faq_url">https://github.com/Staacks/alpharemote#faq--troubleshooting</string>
 
+    <string name="key_binding_label">Physical key binding</string>
+    <string name="key_binding_none">None</string>
+    <string name="key_binding_bind_button">Bind key</string>
+    <string name="key_binding_change_button">Change</string>
+    <string name="key_binding_clear_button">Clear</string>
+    <string name="key_binding_dialog_title">Press any key</string>
+    <string name="key_binding_dialog_message">Press a physical hardware key (e.g. Bluetooth remote button or volume key) to bind it to this action.</string>
+    <string name="key_binding_conflict_title">Key already bound</string>
+    <string name="key_binding_conflict_message">Key \"%1$s\" is already bound to \"%2$s\". Do you want to reassign it to this action?</string>
+    <string name="key_binding_reassign">Reassign</string>
+    <string name="key_binding_reserved_key_warning">This key is system-reserved and cannot be bound.</string>
+
 </resources>

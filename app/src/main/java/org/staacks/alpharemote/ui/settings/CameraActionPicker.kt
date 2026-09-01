@@ -4,6 +4,7 @@ import android.app.AlertDialog
 import android.app.Dialog
 import android.content.DialogInterface
 import android.os.Bundle
+import android.view.KeyEvent
 import android.view.View
 import android.view.View.GONE
 import android.view.View.VISIBLE
@@ -11,19 +12,22 @@ import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.SeekBar
 import android.widget.SeekBar.OnSeekBarChangeListener
+import android.widget.Toast
 import androidx.fragment.app.DialogFragment
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
+import org.staacks.alpharemote.MainActivity
 import org.staacks.alpharemote.R
 import org.staacks.alpharemote.camera.CameraAction
 import org.staacks.alpharemote.camera.CameraActionPreset
 import org.staacks.alpharemote.camera.CameraActionTemplateOption
+import org.staacks.alpharemote.camera.KeyBindingHelper
 import org.staacks.alpharemote.databinding.CameraActionPickerBinding
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 interface CameraActionPickerListener {
-    fun onConfirmCameraActionPicker(index: Int, cameraAction: CameraAction)
+    fun onConfirmCameraActionPicker(index: Int, cameraAction: CameraAction, reassignedFromIndex: Int = -1)
     fun onCancelCameraActionPicker()
     fun onDeleteCameraActionPicker(index: Int)
 }
@@ -34,9 +38,13 @@ class CameraActionPicker : DialogFragment() {
     private val binding get() = _binding!!
 
     private var index = -1
+    private var reassignedFromIndex = -1
+    private var existingActions: ArrayList<CameraAction>? = null
+    private var keyCaptureDialog: AlertDialog? = null
+    private var conflictDialog: AlertDialog? = null
 
     val defaultAction = CameraAction(
-        false, null, null, null, CameraActionPreset.STOP
+        false, null, null, null, CameraActionPreset.STOP, null
     )
 
     private lateinit var cameraAction: MutableStateFlow<CameraAction>
@@ -76,12 +84,24 @@ class CameraActionPicker : DialogFragment() {
         const val CAMERA_ACTION_KEY = "cameraAction"
         const val INDEX_KEY = "index"
         const val SHOW_DELETE_KEY = "showDelete"
-        fun newInstance(index: Int, cameraAction: CameraAction?, showDelete: Boolean): CameraActionPicker {
+        const val EXISTING_ACTIONS_KEY = "existingActions"
+        const val SAVED_CAMERA_ACTION = "savedCameraAction"
+        const val SAVED_REASSIGNED_FROM_INDEX = "savedReassignedFromIndex"
+
+        fun newInstance(
+            index: Int,
+            cameraAction: CameraAction?,
+            showDelete: Boolean,
+            existingActions: List<CameraAction>? = null
+        ): CameraActionPicker {
             val newInstance = CameraActionPicker()
             val args = Bundle()
             args.putSerializable(CAMERA_ACTION_KEY, cameraAction)
             args.putInt(INDEX_KEY, index)
             args.putBoolean(SHOW_DELETE_KEY, showDelete)
+            if (existingActions != null) {
+                args.putSerializable(EXISTING_ACTIONS_KEY, ArrayList(existingActions))
+            }
             newInstance.setArguments(args)
             return newInstance
         }
@@ -91,8 +111,12 @@ class CameraActionPicker : DialogFragment() {
         _binding = CameraActionPickerBinding.inflate(layoutInflater)
 
         index = arguments?.getInt(INDEX_KEY) ?: -1
+        @Suppress("UNCHECKED_CAST")
+        existingActions = arguments?.getSerializable(EXISTING_ACTIONS_KEY) as? ArrayList<CameraAction>
         val oldAction = arguments?.getSerializable(CAMERA_ACTION_KEY) as? CameraAction
-        val startAction = oldAction ?: defaultAction
+        val savedAction = savedInstanceState?.getSerializable(SAVED_CAMERA_ACTION) as? CameraAction
+        val startAction = savedAction ?: oldAction ?: defaultAction
+        reassignedFromIndex = savedInstanceState?.getInt(SAVED_REASSIGNED_FROM_INDEX, -1) ?: -1
 
         val showDelete = arguments?.getBoolean(SHOW_DELETE_KEY) ?: false
 
@@ -130,7 +154,7 @@ class CameraActionPicker : DialogFragment() {
 
         }
 
-        binding.capSelftimerEnable.setOnCheckedChangeListener { buttonView, isChecked ->
+        binding.capSelftimerEnable.setOnCheckedChangeListener { _, isChecked ->
             lifecycleScope.launch {
                 cameraAction.emit(cameraAction.value.copy(
                     selftimer = if (isChecked) (selftimerSeekBarTimeMap.indexToTime(binding.capHold.progress)) else null
@@ -157,7 +181,7 @@ class CameraActionPicker : DialogFragment() {
 
         })
 
-        binding.capHoldEnable.setOnCheckedChangeListener { buttonView, isChecked ->
+        binding.capHoldEnable.setOnCheckedChangeListener { _, isChecked ->
             lifecycleScope.launch {
                 cameraAction.emit(cameraAction.value.copy(
                     duration = if (isChecked) (holdSeekBarTimeMap.indexToTime(binding.capHold.progress)) else null
@@ -184,7 +208,7 @@ class CameraActionPicker : DialogFragment() {
 
         })
 
-        binding.capToggle.setOnCheckedChangeListener { buttonView, isChecked ->
+        binding.capToggle.setOnCheckedChangeListener { _, isChecked ->
             lifecycleScope.launch {
                 cameraAction.emit(cameraAction.value.copy(
                     toggle = isChecked
@@ -211,6 +235,17 @@ class CameraActionPicker : DialogFragment() {
 
         })
 
+        binding.capKeyBind.setOnClickListener {
+            showKeyCaptureDialog()
+        }
+
+        binding.capKeyClear.setOnClickListener {
+            reassignedFromIndex = -1
+            lifecycleScope.launch {
+                cameraAction.emit(cameraAction.value.copy(keyCode = null))
+            }
+        }
+
         binding.capCancel.setOnClickListener{
             (parentFragment as? CameraActionPickerListener)?.onCancelCameraActionPicker()
             dismiss()
@@ -222,10 +257,11 @@ class CameraActionPicker : DialogFragment() {
                 selftimer = if (options.contains(CameraActionTemplateOption.SELFTIMER)) action.selftimer else null,
                 duration = if (options.contains(CameraActionTemplateOption.VARIABLE_DURATION)) action.duration else null,
                 toggle = options.contains(CameraActionTemplateOption.TOGGLE) && action.toggle,
-                step = if (options.contains(CameraActionTemplateOption.ADJUST_SPEED)) action.step else null
+                step = if (options.contains(CameraActionTemplateOption.ADJUST_SPEED)) action.step else null,
+                keyCode = action.keyCode
             )
             (parentFragment as? CameraActionPickerListener)?.onConfirmCameraActionPicker(
-                index, prunedAction
+                index, prunedAction, reassignedFromIndex
             )
             dismiss()
         }
@@ -272,15 +308,115 @@ class CameraActionPicker : DialogFragment() {
                 it.step?.let { step ->
                     binding.capSpeed.progress = (step * 100f).roundToInt()
                 }
+
+                if (it.keyCode != null) {
+                    binding.capKeyStatus.text = KeyBindingHelper.getKeyDisplayName(it.keyCode)
+                    binding.capKeyClear.visibility = VISIBLE
+                    binding.capKeyBind.text = getString(R.string.key_binding_change_button)
+                } else {
+                    binding.capKeyStatus.text = getString(R.string.key_binding_none)
+                    binding.capKeyClear.visibility = GONE
+                    binding.capKeyBind.text = getString(R.string.key_binding_bind_button)
+                }
             }
         }
 
         return AlertDialog.Builder(requireActivity()).setView(binding.root).create()
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        if (::cameraAction.isInitialized) {
+            outState.putSerializable(SAVED_CAMERA_ACTION, cameraAction.value)
+        }
+        outState.putInt(SAVED_REASSIGNED_FROM_INDEX, reassignedFromIndex)
+    }
+
+    private fun showKeyCaptureDialog() {
+        keyCaptureDialog?.dismiss()
+        MainActivity.isKeyCaptureActive = true
+        val captureDialog = AlertDialog.Builder(requireContext())
+            .setTitle(R.string.key_binding_dialog_title)
+            .setMessage(R.string.key_binding_dialog_message)
+            .setNegativeButton(R.string.cancel) { dialog, _ ->
+                dialog.dismiss()
+            }
+            .setOnDismissListener {
+                MainActivity.isKeyCaptureActive = false
+                keyCaptureDialog = null
+            }
+            .create()
+
+        captureDialog.setOnKeyListener { dialog, keyCode, event ->
+            if (event.action == KeyEvent.ACTION_DOWN) {
+                if (keyCode == KeyEvent.KEYCODE_BACK) {
+                    dialog.dismiss()
+                    return@setOnKeyListener true
+                }
+                if (KeyBindingHelper.isSystemReservedKey(keyCode)) {
+                    context?.let {
+                        Toast.makeText(it, R.string.key_binding_reserved_key_warning, Toast.LENGTH_SHORT).show()
+                    }
+                    return@setOnKeyListener true
+                }
+                dialog.dismiss()
+                onKeyCaptured(keyCode)
+                return@setOnKeyListener true
+            } else if (event.action == KeyEvent.ACTION_UP) {
+                if (keyCode != KeyEvent.KEYCODE_BACK) {
+                    return@setOnKeyListener true
+                }
+            }
+            false
+        }
+
+        keyCaptureDialog = captureDialog
+        captureDialog.show()
+    }
+
+    private fun onKeyCaptured(keyCode: Int) {
+        val conflict = KeyBindingHelper.findConflictingAction(existingActions, keyCode, index)
+        if (conflict != null) {
+            val (conflictingIndex, conflictingAction) = conflict
+            val keyName = KeyBindingHelper.getKeyDisplayName(keyCode)
+            val actionName = conflictingAction.getName(requireContext())
+
+            conflictDialog?.dismiss()
+            conflictDialog = AlertDialog.Builder(requireContext())
+                .setTitle(R.string.key_binding_conflict_title)
+                .setMessage(getString(R.string.key_binding_conflict_message, keyName, actionName))
+                .setPositiveButton(R.string.key_binding_reassign) { _, _ ->
+                    reassignedFromIndex = conflictingIndex
+                    lifecycleScope.launch {
+                        cameraAction.emit(cameraAction.value.copy(keyCode = keyCode))
+                    }
+                }
+                .setNegativeButton(R.string.cancel, null)
+                .setOnDismissListener {
+                    conflictDialog = null
+                }
+                .show()
+        } else {
+            reassignedFromIndex = -1
+            lifecycleScope.launch {
+                cameraAction.emit(cameraAction.value.copy(keyCode = keyCode))
+            }
+        }
+    }
+
     override fun onDestroyView() {
+        keyCaptureDialog?.dismiss()
+        keyCaptureDialog = null
+        conflictDialog?.dismiss()
+        conflictDialog = null
+        MainActivity.isKeyCaptureActive = false
         super.onDestroyView()
         _binding = null
+    }
+
+    override fun onDismiss(dialog: DialogInterface) {
+        super.onDismiss(dialog)
+        MainActivity.isKeyCaptureActive = false
     }
 
     override fun onCancel(dialog: DialogInterface) {

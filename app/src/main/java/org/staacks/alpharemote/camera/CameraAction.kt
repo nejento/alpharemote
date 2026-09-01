@@ -11,7 +11,8 @@ data class CameraAction (
     val selftimer: Float?,
     val duration: Float?,
     val step: Float?,
-    val preset: CameraActionPreset
+    val preset: CameraActionPreset,
+    val keyCode: Int? = null
 ) : Serializable {
     fun getIcon(context: Context): Drawable {
         return CameraActionIcon(context, this)
@@ -21,7 +22,8 @@ data class CameraAction (
                 (if (toggle) " " + context.getString(R.string.toggle) else "") +
                 (if (selftimer != null) " timer=" + selftimer + "s" else "") +
                 (if (duration != null) " duration=" + duration + "s" else "") +
-                (if (step != null) " " + "›".repeat((3.0*step).roundToInt()) else "")
+                (if (step != null) " " + "›".repeat((3.0*step).roundToInt()) else "") +
+                (if (keyCode != null) " [" + KeyBindingHelper.getKeyDisplayName(keyCode) + "]" else "")
     }
     private fun applyStepToStepList(list: List<CameraActionStep>): List<CameraActionStep> {
         return list.map {
